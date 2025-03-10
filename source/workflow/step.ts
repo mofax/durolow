@@ -1,4 +1,4 @@
-import { PrismaClient, StepStatus, WorkflowStatus, type WorkflowSteps } from '@prisma/client';
+import { PrismaClient, StepStatus, WorkflowStatus, type WorkflowStepInstances, type WorkflowSteps } from '@prisma/client';
 import type { IWorkflowStep, WorkflowStepOptions } from '../types';
 import { parseDuration } from '../utils/time';
 import { logger } from '../utils/logging';
@@ -33,15 +33,49 @@ export class WorkflowStep implements IWorkflowStep {
 		// First, create or get the step record
 		const step = await this.getOrCreateStep(name);
 
-		// Create a new step instance
-		const stepInstance = await this.prisma.workflowStepInstances.create({
-			data: {
+		const findCompletedInstance = await this.prisma.workflowStepInstances.findFirst({
+			where: {
 				stepId: step.id,
-				retries: 0,
-				status: StepStatus.RUNNING,
-				startedAt: new Date(),
+				status: {
+					in: [StepStatus.COMPLETED],
+				}
 			},
 		});
+
+		if (findCompletedInstance) {
+			logger.info({ step: name, workflowId: this.workflowInstanceId }, 'Step already completed');
+			return findCompletedInstance.output as T
+		}
+
+		const existingInstance = await this.prisma.workflowStepInstances.findFirst({
+			where: {
+				stepId: step.id,
+				status: {
+					notIn: [StepStatus.COMPLETED],
+				}
+			},
+		});
+
+		let stepInstance: WorkflowStepInstances;
+
+		if (existingInstance) {
+			logger.info({ step: name, workflowId: this.workflowInstanceId }, 'Resuming existing step');
+			stepInstance = existingInstance;
+		} else {
+			logger.info({ step: name, workflowId: this.workflowInstanceId }, 'Creating new step instance');
+			stepInstance = await this.prisma.workflowStepInstances.create({
+				data: {
+					stepId: step.id,
+					retries: 0,
+					status: StepStatus.RUNNING,
+					startedAt: new Date(),
+				},
+			});
+		}
+
+		if (!stepInstance) {
+			throw new Error(`step.do: could not initialize step for: ${name}`);
+		}
 
 		// Handle timeout if specified
 		let timeoutId: Timer | undefined;
@@ -105,26 +139,29 @@ export class WorkflowStep implements IWorkflowStep {
 				lastError = error as Error;
 				logger.error({ error, workflowId: this.workflowInstanceId }, 'Step error');
 
+				// If we've exhausted retries, mark as failed
 				if (retryCount >= retryLimit) {
-					// If we've exhausted retries, mark as failed
-					await this.prisma.workflowStepInstances.update({
-						where: { id: stepInstance.id },
-						data: {
-							status: StepStatus.FAILED,
-							failedReason: lastError.message,
-							retries: retryCount,
-						},
-					});
+					await this.prisma.$transaction([
+						this.prisma.workflowStepInstances.update({
+							where: { id: stepInstance.id },
+							data: {
+								status: StepStatus.FAILED,
+								failedReason: lastError.message,
+								retries: retryCount,
+							},
+						}),
+						// Mark workflow as failed
+						this.prisma.workflowInstances.update({
+							where: { id: this.workflowInstanceId },
+							data: {
+								status: WorkflowStatus.FAILED,
+								failedReason: `Step "${name}" failed: ${lastError.message}`,
+							},
+						})
 
-					// Mark workflow as failed
-					await this.prisma.workflowInstances.update({
-						where: { id: this.workflowInstanceId },
-						data: {
-							status: WorkflowStatus.FAILED,
-							failedReason: `Step "${name}" failed: ${lastError.message}`,
-						},
-					});
+					]);
 
+					// this if{} should terminate execution
 					throw lastError;
 				}
 
@@ -132,7 +169,8 @@ export class WorkflowStep implements IWorkflowStep {
 			}
 		}
 
-		// This should never be reached due to the throw in the catch block
+		// Should never reach here
+		// But typescript is not happy without it
 		throw lastError;
 	}
 
