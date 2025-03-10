@@ -1,4 +1,11 @@
-import { PrismaClient, StepStatus, WorkflowStatus, type WorkflowStepInstances, type WorkflowSteps } from '@prisma/client';
+import {
+	PrismaClient,
+	StepStatus,
+	WorkflowStatus,
+	type WorkflowStepInstances,
+	type WorkflowSteps,
+	type WorkflowSleepInstances,
+} from '@prisma/client';
 import type { IWorkflowStep, WorkflowStepOptions } from '../types';
 import { parseDuration } from '../utils/time';
 import { logger } from '../utils/logging';
@@ -38,13 +45,13 @@ export class WorkflowStep implements IWorkflowStep {
 				stepId: step.id,
 				status: {
 					in: [StepStatus.COMPLETED],
-				}
+				},
 			},
 		});
 
 		if (findCompletedInstance) {
 			logger.info({ step: name, workflowId: this.workflowInstanceId }, 'Step already completed');
-			return findCompletedInstance.output as T
+			return findCompletedInstance.output as T;
 		}
 
 		const existingInstance = await this.prisma.workflowStepInstances.findFirst({
@@ -52,7 +59,7 @@ export class WorkflowStep implements IWorkflowStep {
 				stepId: step.id,
 				status: {
 					notIn: [StepStatus.COMPLETED],
-				}
+				},
 			},
 		});
 
@@ -157,8 +164,7 @@ export class WorkflowStep implements IWorkflowStep {
 								status: WorkflowStatus.FAILED,
 								failedReason: `Step "${name}" failed: ${lastError.message}`,
 							},
-						})
-
+						}),
 					]);
 
 					// this if{} should terminate execution
@@ -175,31 +181,76 @@ export class WorkflowStep implements IWorkflowStep {
 	}
 
 	async sleep(name: string, duration: string): Promise<void> {
+		const fnTime = new Date();
 		const ms = parseDuration(duration);
+		logger.info({ name, duration: ms, workflowId: this.workflowInstanceId }, 'step.sleep has been triggered');
 
-		// Create a sleep step
-		const step = await this.getOrCreateStep(name);
+		if (ms > Number.MAX_SAFE_INTEGER) {
+			throw new Error(`step.sleep(${name}): duration ${ms} exceeds maximum safe integer`);
+		}
 
-		// Create a step instance
-		const stepInstance = await this.prisma.workflowStepInstances.create({
-			data: {
-				stepId: step.id,
-				status: StepStatus.RUNNING,
-				startedAt: new Date(),
+		const existingSleepInstance = await this.prisma.workflowSleepInstances.findUnique({
+			where: {
+				workflowInstanceId_name: {
+					workflowInstanceId: this.workflowInstanceId,
+					name,
+				},
 			},
 		});
+
+		if (existingSleepInstance && existingSleepInstance.completedAt !== null) {
+			logger.info({ name, workflowId: this.workflowInstanceId }, 'Sleep already completed');
+			return;
+		}
+
+		let sleepInstance: WorkflowSleepInstances;
+
+		if (existingSleepInstance) {
+			logger.info({ name, workflowId: this.workflowInstanceId }, 'Resuming existing sleep');
+			sleepInstance = existingSleepInstance;
+		} else {
+			// Create a step instance
+			logger.info({ name, workflowId: this.workflowInstanceId }, 'Creating new sleep instance');
+			const [txSleepInstance] = await this.prisma.$transaction([
+				this.prisma.workflowSleepInstances.create({
+					data: {
+						name,
+						duration: ms,
+						workflowInstanceId: this.workflowInstanceId,
+						startedAt: fnTime,
+					},
+				}),
+				this.prisma.workflowInstances.update({
+					where: { id: this.workflowInstanceId },
+					data: {
+						status: WorkflowStatus.SLEEPING,
+					},
+				}),
+			]);
+			sleepInstance = txSleepInstance;
+		}
+
+		const remainingSleepTime =
+			Number(sleepInstance.duration) - (fnTime.getTime() - sleepInstance.startedAt.getTime());
 
 		// Wait for the specified duration
-		await new Promise((resolve) => setTimeout(resolve, ms));
+		await new Promise((resolve) => setTimeout(resolve, remainingSleepTime));
 
-		// Mark the step as completed
-		await this.prisma.workflowStepInstances.update({
-			where: { id: stepInstance.id },
-			data: {
-				status: StepStatus.COMPLETED,
-				completedAt: new Date(),
-			},
-		});
+		await this.prisma.$transaction([
+			// Mark the sleep as completed
+			this.prisma.workflowSleepInstances.update({
+				where: { id: sleepInstance.id },
+				data: {
+					completedAt: new Date(),
+				},
+			}),
+			this.prisma.workflowInstances.update({
+				where: { id: this.workflowInstanceId },
+				data: {
+					status: WorkflowStatus.RUNNING,
+				},
+			}),
+		]);
 	}
 
 	private async getOrCreateStep(name: string) {
@@ -212,8 +263,8 @@ export class WorkflowStep implements IWorkflowStep {
 
 		const existingStep = await this.prisma.workflowSteps.findUnique({
 			where: {
-				workflowId_name: {
-					workflowId: this.workflowInstanceId,
+				workflowInstanceId_name: {
+					workflowInstanceId: this.workflowInstanceId,
 					name,
 				},
 			},
@@ -224,7 +275,7 @@ export class WorkflowStep implements IWorkflowStep {
 			const step = await this.prisma.workflowSteps.create({
 				data: {
 					name,
-					workflowId: this.workflowInstanceId,
+					workflowInstanceId: this.workflowInstanceId,
 				},
 			});
 
