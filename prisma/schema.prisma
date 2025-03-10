@@ -26,7 +26,8 @@ model WorkflowInstances {
    completedAt  DateTime?      @map("completed_at")
    failedReason String?        @map("failed_reason")
 
-   steps WorkflowSteps[]
+   steps          WorkflowSteps[]
+   sleepInstances WorkflowSleepInstances[]
 
    @@index([status])
    @@index([name])
@@ -34,17 +35,17 @@ model WorkflowInstances {
 }
 
 model WorkflowSteps {
-   id         String   @id @default(uuid()) @db.Uuid
-   workflowId String   @map("workflow_id") @db.Uuid
-   name       String // Step name or identifier
-   createdAt  DateTime @default(now()) @map("created_at")
-   updatedAt  DateTime @updatedAt @map("updated_at")
+   id                 String   @id @default(uuid()) @db.Uuid
+   workflowInstanceId String   @map("workflow_id") @db.Uuid
+   name               String // Step name or identifier
+   createdAt          DateTime @default(now()) @map("created_at")
+   updatedAt          DateTime @updatedAt @map("updated_at")
 
-   workflow  WorkflowInstances       @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+   workflow  WorkflowInstances       @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
    instances WorkflowStepInstances[]
 
-   @@unique([workflowId, name])
-   @@index([workflowId])
+   @@unique([workflowInstanceId, name])
+   @@index([workflowInstanceId])
    @@index([name])
    @@map("workflow_steps")
 }
@@ -58,7 +59,7 @@ model WorkflowStepInstances {
    state        Json? // Intermediate state if needed
    history      Json? // Execution logs/events
    retries      Int        @default(0) // Retry count
-   startedAt    DateTime?  @map("started_at")
+   startedAt    DateTime   @map("started_at")
    completedAt  DateTime?  @map("completed_at")
    failedReason String?    @map("failed_reason")
 
@@ -69,9 +70,27 @@ model WorkflowStepInstances {
    @@map("workflow_step_instances")
 }
 
+model WorkflowSleepInstances {
+   id                 String    @id @default(uuid()) @db.Uuid
+   workflowInstanceId String    @map("workflow_id") @db.Uuid
+   name               String // Sleep name or identifier
+   duration           BigInt // Duration in milliseconds
+   startedAt          DateTime  @map("started_at")
+   completedAt        DateTime? @map("completed_at")
+
+   workflowInstance WorkflowInstances @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+
+   @@unique([workflowInstanceId, name])
+   @@index([name])
+   @@index([startedAt])
+   @@index([completedAt])
+   @@map("workflow_sleep_instances")
+}
+
 enum WorkflowStatus {
    PENDING
    RUNNING
+   SLEEPING
    COMPLETED
    FAILED
    CANCELED
