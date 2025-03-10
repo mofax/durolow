@@ -1,0 +1,22 @@
+{
+	"name": "durolow",
+	"version": "0.0.1",
+	"module": "index.ts",
+	"type": "module",
+	"devDependencies": {
+		"@types/bun": "latest",
+		"pino-pretty": "^13.0.0",
+		"prettier": "^3.5.3"
+	},
+	"peerDependencies": {
+		"typescript": "^5.0.0"
+	},
+	"dependencies": {
+		"@prisma/client": "^6.4.1",
+		"cbor-x": "^1.6.0",
+		"drizzle-orm": "^0.39.3",
+		"pino": "^9.6.0",
+		"postgres": "^3.4.5",
+		"prisma": "^6.4.1"
+	}
+}

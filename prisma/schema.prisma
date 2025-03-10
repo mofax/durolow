@@ -1,0 +1,85 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+   provider = "prisma-client-js"
+}
+
+datasource db {
+   provider = "postgresql"
+   url      = env("DATABASE_URL")
+}
+
+model WorkflowInstances {
+   id           String         @id @default(uuid()) @db.Uuid
+   name         String
+   status       WorkflowStatus
+   input        Json?
+   output       Json?
+   state        Json?
+   history      Json?
+   createdAt    DateTime       @default(now()) @map("created_at")
+   updatedAt    DateTime       @updatedAt @map("updated_at")
+   completedAt  DateTime?      @map("completed_at")
+   failedReason String?        @map("failed_reason")
+
+   steps WorkflowSteps[]
+
+   @@index([status])
+   @@index([name])
+   @@map("workflow_instances")
+}
+
+model WorkflowSteps {
+   id         String   @id @default(uuid()) @db.Uuid
+   workflowId String   @map("workflow_id") @db.Uuid
+   name       String // Step name or identifier
+   createdAt  DateTime @default(now()) @map("created_at")
+   updatedAt  DateTime @updatedAt @map("updated_at")
+
+   workflow  WorkflowInstances       @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+   instances WorkflowStepInstances[]
+
+   @@unique([workflowId, name])
+   @@index([workflowId])
+   @@index([name])
+   @@map("workflow_steps")
+}
+
+model WorkflowStepInstances {
+   id           String     @id @default(uuid()) @db.Uuid
+   stepId       String     @map("step_id") @db.Uuid
+   status       StepStatus
+   input        Json? // Input specific to this execution
+   output       Json? // Output/result of this execution
+   state        Json? // Intermediate state if needed
+   history      Json? // Execution logs/events
+   retries      Int        @default(0) // Retry count
+   startedAt    DateTime?  @map("started_at")
+   completedAt  DateTime?  @map("completed_at")
+   failedReason String?    @map("failed_reason")
+
+   step WorkflowSteps @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+   @@index([stepId])
+   @@map("workflow_step_instances")
+}
+
+enum WorkflowStatus {
+   PENDING
+   RUNNING
+   COMPLETED
+   FAILED
+   CANCELED
+}
+
+enum StepStatus {
+   PENDING
+   RUNNING
+   COMPLETED
+   FAILED
+   RETRYING
+}
