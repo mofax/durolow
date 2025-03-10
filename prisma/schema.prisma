@@ -65,6 +65,7 @@ model WorkflowStepInstances {
    step WorkflowSteps @relation(fields: [stepId], references: [id], onDelete: Cascade)
 
    @@index([stepId])
+   @@index([stepId, status])
    @@map("workflow_step_instances")
 }
 

@@ -41,6 +41,10 @@ export class MyWorkflow implements IWorkflow {
 
 		console.log('Sleep done');
 
+		const aDate = await step.do('get a date', async () => {
+			return new Date();
+		});
+
 		await step.do(
 			'make a call to write that could maybe, just might, fail',
 			// Define a retry strategy
@@ -63,6 +67,7 @@ export class MyWorkflow implements IWorkflow {
 				const cloudflareIps = apiResponse.result;
 
 				return {
+					aDate: aDate,
 					processedFiles: fileList.length,
 					ipCount: cloudflareIps?.length || 0,
 				};

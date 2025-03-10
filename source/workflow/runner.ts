@@ -1,4 +1,4 @@
-import { PrismaClient, WorkflowStatus } from '@prisma/client';
+import { PrismaClient, WorkflowStatus, type WorkflowInstances } from '@prisma/client';
 import { WorkflowStep } from './step';
 import type { IWorkflow, WorkflowParams, WorkflowEnv } from '../types';
 import { logger } from '../utils/logging';
@@ -15,20 +15,37 @@ export class WorkflowRunner<T extends IWorkflow = IWorkflow> {
 		this.env = env;
 	}
 
-	async run(params: WorkflowParams): Promise<Result<string>> {
+	async run(params: WorkflowParams, argWorkflowId?: string): Promise<Result<string>> {
 		let workflowId: string | null = null;
 		try {
 			// Create the workflow instance
 			const workflow = new this.WorkflowClass();
+			let workflowInstance: WorkflowInstances;
 
-			// Create workflow instance in database
-			const workflowInstance = await this.prisma.workflowInstances.create({
-				data: {
-					name: workflow.name,
-					status: WorkflowStatus.PENDING,
-					input: params as any,
-				},
-			});
+			if (argWorkflowId) {
+				const find = await this.prisma.workflowInstances.findUnique({
+					where: { id: argWorkflowId },
+				});
+				if (!find) {
+					logger.error(
+						{ workflowId: argWorkflowId },
+						'WorkflowRunner could not find workflow instance for provided id'
+					);
+					throw new Error(
+						`WorkflowRunner could not find workflow instance for provided id: ${argWorkflowId}`
+					);
+				}
+				workflowInstance = find;
+			} else {
+				// Create workflow instance in database
+				workflowInstance = await this.prisma.workflowInstances.create({
+					data: {
+						name: workflow.name,
+						status: WorkflowStatus.PENDING,
+						input: params as any,
+					},
+				});
+			}
 
 			workflowId = workflowInstance.id;
 
